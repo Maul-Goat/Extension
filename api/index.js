@@ -17,81 +17,88 @@ app.use(express.json());
 
 function authMiddleware(req, res, next) {
     const authHeader = req.headers['authorization'];
-    if (!authHeader) return res.status(401).json({ error: 'Token diperlukan' });
+    if (!authHeader) return res.status(401).json({ error: 'Token required' });
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded;
         next();
     } catch {
-        return res.status(401).json({ error: 'Token tidak valid atau kadaluarsa' });
+        return res.status(401).json({ error: 'Invalid or expired token' });
     }
 }
 
 app.post('/api/register', async (req, res) => {
-    const { email, password, username } = req.body;
-    if (!email || !password || !username)
-        return res.status(400).json({ error: 'Email, password, dan username diperlukan' });
+    const { username, password } = req.body;
+    if (!username || !password)
+        return res.status(400).json({ error: 'Username and password required' });
     if (password.length < 6)
-        return res.status(400).json({ error: 'Password minimal 6 karakter' });
+        return res.status(400).json({ error: 'Password min. 6 characters' });
+
     try {
         const { data: existing } = await supabase
-            .from('users').select('id').eq('email', email).single();
+            .from('users').select('id').eq('username', username).single();
         if (existing)
-            return res.status(409).json({ error: 'Email sudah terdaftar' });
+            return res.status(409).json({ error: 'Username already registered' });
+
         const hashedPassword = await bcrypt.hash(password, 10);
         const { data: newUser, error } = await supabase
             .from('users')
-            .insert({ email, username, password: hashedPassword, is_active: true, plan: 'free', created_at: new Date().toISOString() })
-            .select('id, email, username, plan')
+            .insert({ username, password: hashedPassword, is_active: true, plan: 'free', created_at: new Date().toISOString() })
+            .select('id, username, plan')
             .single();
         if (error) throw error;
+
         const token = jwt.sign(
-            { id: newUser.id, email: newUser.email, plan: newUser.plan },
+            { id: newUser.id, username: newUser.username, plan: newUser.plan },
             process.env.JWT_SECRET, { expiresIn: '7d' }
         );
         res.json({ success: true, token, user: newUser });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Gagal mendaftar. Coba lagi.' });
+        res.status(500).json({ error: 'Registration failed. Try again.' });
     }
 });
 
 app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password)
-        return res.status(400).json({ error: 'Email dan password diperlukan' });
+    const { username, password } = req.body;
+    if (!username || !password)
+        return res.status(400).json({ error: 'Username and password required' });
+
     try {
         const { data: user, error } = await supabase
-            .from('users').select('*').eq('email', email).single();
+            .from('users').select('*').eq('username', username).single();
         if (error || !user)
-            return res.status(401).json({ error: 'Email atau password salah' });
+            return res.status(401).json({ error: 'Username or password incorrect' });
         if (!user.is_active)
-            return res.status(403).json({ error: 'Akun dinonaktifkan' });
+            return res.status(403).json({ error: 'Account disabled' });
+
         const valid = await bcrypt.compare(password, user.password);
         if (!valid)
-            return res.status(401).json({ error: 'Email atau password salah' });
+            return res.status(401).json({ error: 'Username or password incorrect' });
+
         await supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+
         const token = jwt.sign(
-            { id: user.id, email: user.email, plan: user.plan },
+            { id: user.id, username: user.username, plan: user.plan },
             process.env.JWT_SECRET, { expiresIn: '7d' }
         );
-        res.json({ success: true, token, user: { id: user.id, email: user.email, username: user.username, plan: user.plan } });
+        res.json({ success: true, token, user: { id: user.id, username: user.username, plan: user.plan } });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Gagal login. Coba lagi.' });
+        res.status(500).json({ error: 'Login failed. Try again.' });
     }
 });
 
 app.get('/api/verify', authMiddleware, async (req, res) => {
     try {
         const { data: user } = await supabase
-            .from('users').select('id, email, username, plan, is_active').eq('id', req.user.id).single();
+            .from('users').select('id, username, plan, is_active').eq('id', req.user.id).single();
         if (!user || !user.is_active)
-            return res.status(403).json({ error: 'Akun tidak valid' });
+            return res.status(403).json({ error: 'Account not valid' });
         res.json({ success: true, user });
     } catch {
-        res.status(500).json({ error: 'Gagal verifikasi' });
+        res.status(500).json({ error: 'Verification failed' });
     }
 });
 
